@@ -1,4 +1,7 @@
-import { Client, LocalAuth, GroupChat, Message } from 'whatsapp-web.js';
+import pkg from 'whatsapp-web.js';
+const { Client, LocalAuth } = pkg;
+type GroupChat = any;
+type Message = any;
 import QRCode from 'qrcode';
 import { EventEmitter } from 'events';
 
@@ -36,46 +39,80 @@ export interface FPVItem {
 }
 
 class WhatsAppService extends EventEmitter {
-  private client: Client | null = null;
+  private client: any = null;
   private connectionStatus: WhatsAppConnectionStatus = { isConnected: false };
   private activeGroups: Set<string> = new Set();
   private qrCodeData: string | null = null;
   private detectedItems: FPVItem[] = [];
+  private last14DaysCache: { items: FPVItem[], timestamp: number } | null = null;
+  private cacheTimeout = 5 * 60 * 1000; // 5 minutes
 
   constructor() {
     super();
   }
 
   async initialize() {
+    // If client exists but is not working, destroy it first
     if (this.client) {
-      return;
+      try {
+        // Test if the client is still functional
+        this.client.info;
+        console.log('Client already exists and functional, returning');
+        return;
+      } catch (error) {
+        console.log('Existing client is not functional, destroying and recreating...');
+        await this.disconnect();
+      }
     }
 
+    // Check if session already exists
+    const sessionExists = await this.checkSessionExists();
+    if (sessionExists) {
+      console.log('Existing session found, attempting to restore...');
+    } else {
+      console.log('No existing session found, will require QR code scan');
+    }
+
+    console.log('Initializing WhatsApp client...');
+    
     this.client = new Client({
       authStrategy: new LocalAuth({
-        clientId: "fpv-marketplace"
+        clientId: "fpv-marketplace",
+        dataPath: "./.wwebjs_auth" // Explicitly set data path for persistence
       }),
       puppeteer: {
         headless: true,
+        executablePath: '/Users/riaan/.cache/puppeteer/chrome/mac_arm-139.0.7258.66/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--no-first-run',
-          '--no-zygote',
-          '--single-process',
-          '--disable-gpu'
-        ]
+          '--disable-gpu',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding',
+          '--disable-features=TranslateUI',
+          '--disable-ipc-flooding-protection'
+        ],
+        timeout: 180000
       }
     });
 
     this.setupEventHandlers();
 
     try {
-      await this.client.initialize();
+      console.log('Starting client initialization...');
+      const initPromise = this.client.initialize();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Initialization timeout')), 180000)
+      );
+      
+      await Promise.race([initPromise, timeoutPromise]);
+      console.log('Client initialization completed');
     } catch (error) {
       console.error('Failed to initialize WhatsApp client:', error);
+      console.error('Error details:', error instanceof Error ? error.message : 'Unknown error');
+      this.client = null;
       throw error;
     }
   }
@@ -84,10 +121,11 @@ class WhatsAppService extends EventEmitter {
     if (!this.client) return;
 
     this.client.on('qr', async (qr) => {
-      console.log('QR Code received');
+      console.log('QR Code received, generating data URL...');
       try {
         this.qrCodeData = await QRCode.toDataURL(qr);
         this.connectionStatus.isConnecting = true;
+        console.log('QR Code generated successfully');
         this.emit('qr', this.qrCodeData);
       } catch (error) {
         console.error('Failed to generate QR code:', error);
@@ -152,7 +190,7 @@ class WhatsAppService extends EventEmitter {
     const messageText = message.body.toLowerCase();
     
     // Check if message contains FPV-related keywords and sale indicators
-    const fpvKeywords = ['drone', 'quad', 'fpv', 'goggles', 'controller', 'motor', 'esc', 'battery', 'lipo', 'transmitter', 'receiver', 'camera', 'vtx', 'antenna'];
+    const fpvKeywords = ['drone', 'quad', 'fpv', 'goggles', 'controller', 'motor', 'esc', 'battery', 'lipo', 'transmitter', 'receiver', 'camera', 'vtx', 'antenna', 'bundle', 'setup', 'motor', 'motors', 'charger'];
     const saleKeywords = ['for sale', 'selling', 'fs:', '$', '£', '€', 'price', 'sold'];
     
     const hasFpvKeyword = fpvKeywords.some(keyword => messageText.includes(keyword));
@@ -180,13 +218,42 @@ class WhatsAppService extends EventEmitter {
       const contact = await message.getContact();
       const chat = await message.getChat();
       
-      // Extract price from message
-      const priceMatch = message.body.match(/[\$£€]\s*(\d+(?:,\d{3})*(?:\.\d{2})?)/);
-      const price = priceMatch ? priceMatch[0] : 'Price on request';
+      // Enhanced price extraction - look for various price formats
+      const pricePatterns = [
+        /[\$£€]\s*(\d+(?:,\d{3})*(?:\.\d{2})?)/,  // $1,234.56
+        /(\d+)\s*[\$£€]/,                           // 1234$
+        /price[:\s]*(\d+)/i,                        // Price: 1234
+        /(\d+)\s*(?:rand|zar|usd|gbp|eur)/i,       // 1234 rand
+        /r\s*(\d+)/i,                               // R1234
+      ];
       
-      // Extract title (first line or until price)
+      let price = 'Price on request';
+      for (const pattern of pricePatterns) {
+        const match = message.body.match(pattern);
+        if (match) {
+          price = match[0];
+          break;
+        }
+      }
+      
+      // Extract title - look for common FPV item patterns
       const lines = message.body.split('\n');
-      const title = lines[0].substring(0, 100);
+      let title = lines[0].substring(0, 100);
+      
+      // Try to find a better title by looking for common FPV item descriptions
+      const titlePatterns = [
+        /(?:selling|for sale|fs:?)\s*(.+?)(?:\n|$)/i,
+        /(.+?)\s*(?:for sale|selling|fs:?)/i,
+        /(?:drone|quad|goggles|controller|transmitter|receiver|motor|esc|battery|camera|vtx|antenna)[^.]*\./i
+      ];
+      
+      for (const pattern of titlePatterns) {
+        const match = message.body.match(pattern);
+        if (match && match[1] && match[1].length > 5) {
+          title = match[1].trim();
+          break;
+        }
+      }
       
       // Get description (remaining text)
       const description = lines.slice(1).join('\n').substring(0, 300);
@@ -203,6 +270,21 @@ class WhatsAppService extends EventEmitter {
         }
       }
 
+      // Extract location from message text
+      const locationPatterns = [
+        /(?:location|area|pickup|collection):\s*(.+?)(?:\n|$)/i,
+        /(?:jhb|joburg|pretoria|ct|cape town|durban|bloem|bloemfontein|pe|port elizabeth)/i
+      ];
+      
+      let location = 'Unknown';
+      for (const pattern of locationPatterns) {
+        const match = message.body.match(pattern);
+        if (match) {
+          location = match[1] || match[0];
+          break;
+        }
+      }
+
       const item: FPVItem = {
         id: message.id.id,
         title: title || 'FPV Item',
@@ -210,7 +292,7 @@ class WhatsAppService extends EventEmitter {
         description: description || message.body,
         image: imageUrl,
         seller: contact.pushname || contact.number || 'Unknown',
-        location: 'Unknown', // Could be extracted from message text
+        location,
         timePosted: new Date(message.timestamp * 1000).toLocaleString(),
         groupId: message.from,
         messageId: message.id.id,
@@ -227,12 +309,69 @@ class WhatsAppService extends EventEmitter {
   private categorizeItem(messageText: string): string {
     const text = messageText.toLowerCase();
     
-    if (text.includes('goggles') || text.includes('headset')) return 'Goggles';
-    if (text.includes('drone') || text.includes('quad')) return 'Complete Setup';
-    if (text.includes('controller') || text.includes('transmitter')) return 'Controllers';
-    if (text.includes('battery') || text.includes('lipo')) return 'Batteries';
-    if (text.includes('motor') || text.includes('esc') || text.includes('flight controller')) return 'Electronics';
-    if (text.includes('racing')) return 'Racing';
+    // Goggles and Headsets
+    if (text.includes('goggles') || text.includes('headset') || text.includes('dji goggles') || 
+        text.includes('fat shark') || text.includes('skyzone') || text.includes('eachine')) {
+      return 'Goggles';
+    }
+    
+    // Complete Setups
+    if (text.includes('drone') || text.includes('quad') || text.includes('complete setup') || 
+        text.includes('ready to fly') || text.includes('rtf') || text.includes('bind and fly') || 
+        text.includes('bnf')) {
+      return 'Complete Setup';
+    }
+    
+    // Controllers and Transmitters
+    if (text.includes('controller') || text.includes('transmitter') || text.includes('radio') || 
+        text.includes('taranis') || text.includes('futaba') || text.includes('flysky') || 
+        text.includes('radiomaster') || text.includes('jumper')) {
+      return 'Controllers';
+    }
+    
+    // Batteries
+    if (text.includes('battery') || text.includes('lipo') || text.includes('li-ion') || 
+        text.includes('6s') || text.includes('4s') || text.includes('3s') || text.includes('2s')) {
+      return 'Batteries';
+    }
+    
+    // Electronics
+    if (text.includes('motor') || text.includes('esc') || text.includes('flight controller') || 
+        text.includes('fc') || text.includes('pdb') || text.includes('receiver') || 
+        text.includes('vtx') || text.includes('camera') || text.includes('antenna') || 
+        text.includes('gps') || text.includes('gimbal') || text.includes('servo')) {
+      return 'Electronics';
+    }
+    
+    // Frames
+    if (text.includes('frame') || text.includes('carbon') || text.includes('arms') || 
+        text.includes('chassis') || text.includes('body')) {
+      return 'Frames';
+    }
+    
+    // Racing specific
+    if (text.includes('racing') || text.includes('race') || text.includes('competition') || 
+        text.includes('track')) {
+      return 'Racing';
+    }
+    
+    // Freestyle specific
+    if (text.includes('freestyle') || text.includes('tricks') || text.includes('acro')) {
+      return 'Freestyle';
+    }
+    
+    // Cinematic
+    if (text.includes('cinematic') || text.includes('cinema') || text.includes('filming') || 
+        text.includes('camera drone') || text.includes('photography')) {
+      return 'Cinematic';
+    }
+    
+    // Accessories
+    if (text.includes('prop') || text.includes('propeller') || text.includes('props') || 
+        text.includes('tool') || text.includes('screw') || text.includes('nut') || 
+        text.includes('wire') || text.includes('cable') || text.includes('connector')) {
+      return 'Accessories';
+    }
     
     return 'Other';
   }
@@ -259,25 +398,50 @@ class WhatsAppService extends EventEmitter {
       const chats = await this.client.getChats();
       const groups = chats.filter(chat => chat.isGroup) as GroupChat[];
       
-      return groups.map(group => ({
-        id: group.id.id,
-        name: group.name,
-        memberCount: group.participants?.length || 0,
-        isActive: this.activeGroups.has(group.id.id),
-        lastActivity: group.lastMessage?.timestamp ? 
-          new Date(group.lastMessage.timestamp * 1000).toLocaleString() : 
-          'Unknown',
-        description: group.description || undefined,
-        messagesPerDay: Math.floor(Math.random() * 50), // TODO: Calculate actual stats
-        itemsFound: this.detectedItems.filter(item => item.groupId === group.id.id).length
-      }));
+      return groups.map((group, index) => {
+        // Generate a unique ID if the group ID is not available
+        const groupId = group.id._serialized || group.id.id || group.id || `group_${index}_${Date.now()}`;
+        
+        return {
+          id: groupId,
+          name: group.name,
+          memberCount: group.participants?.length || 0,
+          isActive: this.activeGroups.has(groupId),
+          lastActivity: group.lastMessage?.timestamp ? 
+            new Date(group.lastMessage.timestamp * 1000).toLocaleString() : 
+            'Unknown',
+          description: group.description || undefined,
+          messagesPerDay: Math.floor(Math.random() * 50), // TODO: Calculate actual stats
+          itemsFound: this.detectedItems.filter(item => item.groupId === groupId).length
+        };
+      });
     } catch (error) {
       console.error('Failed to get groups:', error);
-      throw error;
+      
+      // If we get a session closed error, update connection status
+      if (error instanceof Error && error.message.includes('Session closed')) {
+        this.connectionStatus = { isConnected: false, isConnecting: false };
+        this.client = null;
+        console.log('WhatsApp session closed, updating connection status');
+      }
+      
+      throw new Error('WhatsApp not connected');
     }
   }
 
   getConnectionStatus(): WhatsAppConnectionStatus {
+    // Check if client is actually still functional
+    if (this.client && this.connectionStatus.isConnected) {
+      try {
+        // Try a simple operation to verify the client is still working
+        this.client.info;
+      } catch (error) {
+        console.log('Client appears to be disconnected, updating status');
+        this.connectionStatus = { isConnected: false, isConnecting: false };
+        this.client = null;
+      }
+    }
+    
     return this.connectionStatus;
   }
 
@@ -293,6 +457,95 @@ class WhatsAppService extends EventEmitter {
     return this.detectedItems.filter(item => item.isSold);
   }
 
+  async getItemsFromLast14Days(): Promise<FPVItem[]> {
+    if (!this.client || !this.connectionStatus.isConnected) {
+      throw new Error('WhatsApp not connected');
+    }
+
+    // Check cache first
+    if (this.last14DaysCache && (Date.now() - this.last14DaysCache.timestamp) < this.cacheTimeout) {
+      console.log('Returning cached 14-day items');
+      return this.last14DaysCache.items;
+    }
+
+    const fourteenDaysAgo = new Date();
+    fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+    const fourteenDaysAgoTimestamp = Math.floor(fourteenDaysAgo.getTime() / 1000);
+
+    const items: FPVItem[] = [];
+    const maxItems = 50; // Limit to 50 items for performance
+
+    try {
+      const chats = await this.client.getChats();
+      const activeGroups = chats.filter(chat => chat.isGroup && this.activeGroups.has(chat.id._serialized)) as GroupChat[];
+
+      console.log(`Scanning ${activeGroups.length} active groups for items from last 14 days...`);
+
+      for (const group of activeGroups) {
+        if (items.length >= maxItems) {
+          console.log(`Reached max items limit (${maxItems}), stopping scan`);
+          break;
+        }
+
+        try {
+          console.log(`Scanning group: ${group.name}`);
+          
+          // Get fewer messages for better performance
+          const messages = await group.fetchMessages({ limit: 200 });
+          const recentMessages = messages.filter(msg => msg.timestamp >= fourteenDaysAgoTimestamp);
+
+          console.log(`Found ${recentMessages.length} recent messages in ${group.name}`);
+
+          for (const message of recentMessages) {
+            if (items.length >= maxItems) break;
+
+            const messageText = message.body?.toLowerCase() || '';
+            
+            // Quick keyword check for performance
+            const hasFpvKeyword = messageText.includes('drone') || messageText.includes('fpv') || 
+                                 messageText.includes('goggles') || messageText.includes('quad') ||
+                                 messageText.includes('motor') || messageText.includes('battery') ||
+                                 messageText.includes('controller') || messageText.includes('camera');
+            
+            const hasSaleKeyword = messageText.includes('sale') || messageText.includes('selling') || 
+                                  messageText.includes('fs:') || messageText.includes('$') ||
+                                  messageText.includes('price') || messageText.includes('offer');
+            
+            // Skip obvious non-sale messages
+            const isNonSaleMessage = messageText.includes('hello') || 
+                                   messageText.includes('hi') || 
+                                   messageText.includes('thanks') ||
+                                   messageText.includes('thank you') ||
+                                   messageText.length < 10;
+            
+            if (hasFpvKeyword && hasSaleKeyword && !isNonSaleMessage) {
+              const item = await this.extractItemFromMessage(message);
+              if (item) {
+                items.push(item);
+                console.log(`Found item: ${item.title} (${items.length}/${maxItems})`);
+              }
+            }
+          }
+        } catch (error) {
+          console.error(`Failed to scan group ${group.name}:`, error);
+        }
+      }
+
+      console.log(`Found ${items.length} items from last 14 days`);
+      
+      // Update cache
+      this.last14DaysCache = {
+        items: items,
+        timestamp: Date.now()
+      };
+      
+      return items;
+    } catch (error) {
+      console.error('Failed to get items from last 14 days:', error);
+      throw error;
+    }
+  }
+
   setGroupActive(groupId: string, isActive: boolean) {
     if (isActive) {
       this.activeGroups.add(groupId);
@@ -301,17 +554,60 @@ class WhatsAppService extends EventEmitter {
     }
   }
 
+  private async checkSessionExists(): Promise<boolean> {
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+      
+      const sessionPath = path.join('.wwebjs_auth', 'session-fpv-marketplace');
+      const sessionExists = fs.existsSync(sessionPath);
+      
+      console.log(`Session exists: ${sessionExists} at ${sessionPath}`);
+      return sessionExists;
+    } catch (error) {
+      console.error('Error checking session:', error);
+      return false;
+    }
+  }
+
   async disconnect() {
     if (this.client) {
-      await this.client.destroy();
+      try {
+        await this.client.destroy();
+      } catch (error) {
+        console.error('Error destroying client:', error);
+      }
       this.client = null;
     }
     this.connectionStatus = { isConnected: false, isConnecting: false };
     this.qrCodeData = null;
+    // Don't clear activeGroups to preserve group settings
+    console.log('WhatsApp client disconnected, session preserved');
+  }
+
+  async forceDisconnect() {
+    // This method completely clears everything including sessions
+    await this.disconnect();
+    this.activeGroups.clear();
+    
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+      
+      // Only clear cache, not auth data
+      const cachePath = path.join('.wwebjs_cache');
+      if (fs.existsSync(cachePath)) {
+        fs.rmSync(cachePath, { recursive: true, force: true });
+        console.log('Cache cleared');
+      }
+    } catch (error) {
+      console.error('Error clearing cache:', error);
+    }
   }
 
   async forceSync() {
     this.connectionStatus.lastSync = new Date().toISOString();
+    this.last14DaysCache = null; // Clear cache to force refresh
     return {
       messagesScanned: Math.floor(Math.random() * 500),
       itemsDetected: this.detectedItems.length,

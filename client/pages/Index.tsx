@@ -1,114 +1,25 @@
 import { useState, useEffect } from "react";
 import { ProductCard } from "@/components/ProductCard";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Activity, TrendingUp, Package, Clock } from "lucide-react";
-
-const mockProducts = [
-  {
-    id: "1",
-    title: "DJI FPV Drone with Controller",
-    price: "$899",
-    description: "Excellent condition DJI FPV drone with original controller and goggles. Barely used, includes all original accessories and packaging.",
-    image: "https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=400&h=300&fit=crop",
-    seller: "Mike_FPV",
-    location: "Los Angeles, CA",
-    timePosted: "2 hours ago",
-    category: "Complete Setup"
-  },
-  {
-    id: "2",
-    title: "Custom 5-inch Racing Quad",
-    price: "$450",
-    description: "Hand-built racing quad with premium components. T-Motor F60 Pro motors, Crossfire receiver, and RunCam Phoenix camera.",
-    image: "https://images.unsplash.com/photo-1551731409-43eb3e517a1a?w=400&h=300&fit=crop",
-    seller: "QuadBuilder_99",
-    location: "Austin, TX",
-    timePosted: "4 hours ago",
-    category: "Racing"
-  },
-  {
-    id: "3",
-    title: "Fat Shark HDO2 FPV Goggles",
-    price: "$320",
-    description: "Fat Shark HDO2 goggles in great condition. Clear OLED display, comfortable fit. Includes diversity module.",
-    seller: "FPVPilot_Jane",
-    location: "Denver, CO",
-    timePosted: "6 hours ago",
-    category: "Goggles"
-  },
-  {
-    id: "4",
-    title: "TBS Crossfire Micro TX",
-    price: "$89",
-    description: "TBS Crossfire Micro transmitter module. Perfect for long range flying. Includes original antenna.",
-    seller: "LongRange_Dave",
-    location: "Seattle, WA",
-    timePosted: "8 hours ago",
-    category: "Electronics",
-    isSold: true
-  },
-  {
-    id: "5",
-    title: "Betaflight F4 Flight Controller",
-    price: "$35",
-    description: "Brand new Betaflight F4 flight controller. Still in original packaging, perfect for your next build.",
-    image: "https://images.unsplash.com/photo-1558618047-3c8c76ca7d13?w=400&h=300&fit=crop",
-    seller: "TechBuilder",
-    location: "Miami, FL",
-    timePosted: "1 day ago",
-    category: "Electronics"
-  },
-  {
-    id: "6",
-    title: "4S 1500mAh LiPo Battery Pack",
-    price: "$45",
-    description: "High-quality 4S 1500mAh 100C LiPo battery. Only 3 cycles, excellent condition. Perfect for 5-inch quads.",
-    seller: "PowerUser_FPV",
-    location: "Phoenix, AZ",
-    timePosted: "1 day ago",
-    category: "Batteries"
-  }
-];
-
-const stats = [
-  {
-    title: "Active Listings",
-    value: "1,247",
-    icon: Package,
-    change: "+12%"
-  },
-  {
-    title: "Items Sold Today",
-    value: "89",
-    icon: TrendingUp,
-    change: "+5%"
-  },
-  {
-    title: "Active Groups",
-    value: "23",
-    icon: Activity,
-    change: "+2%"
-  },
-  {
-    title: "Avg. Response Time",
-    value: "2.4h",
-    icon: Clock,
-    change: "-8%"
-  }
-];
+import { Activity, TrendingUp, Package, Clock, Settings } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 export default function Index() {
-  const [availableProducts, setAvailableProducts] = useState(mockProducts.filter(p => !p.isSold));
-  const [soldProducts, setSoldProducts] = useState(mockProducts.filter(p => p.isSold));
+  const [availableProducts, setAvailableProducts] = useState([]);
+  const [soldProducts, setSoldProducts] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState({ isConnected: false, isConnecting: false });
 
-  // Load real detected items
+  // Load real detected items and connection status
   useEffect(() => {
     loadItems();
-    const interval = setInterval(loadItems, 30000); // Refresh every 30 seconds
+    checkConnectionStatus();
+    const interval = setInterval(() => {
+      loadItems();
+      checkConnectionStatus();
+    }, 30000); // Refresh every 30 seconds
     return () => clearInterval(interval);
   }, []);
 
@@ -116,29 +27,68 @@ export default function Index() {
     setIsLoading(true);
     try {
       const [availableResponse, soldResponse] = await Promise.all([
-        fetch('/api/whatsapp/items'),
-        fetch('/api/whatsapp/items/sold')
+        fetch('/api/whatsapp/items/14days'),
+        fetch('/api/whatsapp/items/sold/14days')
       ]);
 
       if (availableResponse.ok) {
         const available = await availableResponse.json();
-        if (available.length > 0) {
-          setAvailableProducts(available);
-        }
+        setAvailableProducts(available);
       }
 
       if (soldResponse.ok) {
         const sold = await soldResponse.json();
-        if (sold.length > 0) {
-          setSoldProducts(sold);
-        }
+        setSoldProducts(sold);
       }
     } catch (error) {
       console.error('Failed to load items:', error);
-      // Keep using mock data on error
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const checkConnectionStatus = async () => {
+    try {
+      const response = await fetch('/api/whatsapp/status');
+      if (response.ok) {
+        const status = await response.json();
+        setConnectionStatus(status);
+      }
+    } catch (error) {
+      console.error('Failed to check connection status:', error);
+    }
+  };
+
+  const getStats = () => {
+    const activeGroups = connectionStatus.isConnected ? "Connected" : "Not Connected";
+    const itemsFound = availableProducts.length + soldProducts.length;
+    
+    return [
+      {
+        title: "WhatsApp Status",
+        value: activeGroups,
+        icon: Activity,
+        change: connectionStatus.isConnected ? "Connected" : "Disconnected"
+      },
+      {
+        title: "Items Found",
+        value: itemsFound.toString(),
+        icon: Package,
+        change: itemsFound > 0 ? `+${itemsFound}` : "0"
+      },
+      {
+        title: "Available Items",
+        value: availableProducts.length.toString(),
+        icon: Package,
+        change: availableProducts.length > 0 ? `+${availableProducts.length}` : "0"
+      },
+      {
+        title: "Recently Sold",
+        value: soldProducts.length.toString(),
+        icon: TrendingUp,
+        change: soldProducts.length > 0 ? `+${soldProducts.length}` : "0"
+      }
+    ];
   };
 
   return (
@@ -146,7 +96,7 @@ export default function Index() {
       <div className="container mx-auto py-8 space-y-8">
         {/* Stats Section */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {stats.map((stat) => (
+          {getStats().map((stat) => (
             <Card key={stat.title} className="border-0 shadow-sm bg-card/50 backdrop-blur">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -157,7 +107,7 @@ export default function Index() {
               <CardContent>
                 <div className="text-2xl font-bold">{stat.value}</div>
                 <p className="text-xs text-muted-foreground">
-                  <span className="text-fpv-success">{stat.change}</span> from last week
+                  {stat.change}
                 </p>
               </CardContent>
             </Card>
@@ -170,7 +120,9 @@ export default function Index() {
             <div>
               <h2 className="text-3xl font-bold tracking-tight">FPV Marketplace</h2>
               <p className="text-muted-foreground">
-                Latest items from your WhatsApp groups
+                {connectionStatus.isConnected 
+                  ? "FPV items from your WhatsApp groups (last 14 days)" 
+                  : "Connect WhatsApp to start monitoring groups"}
               </p>
             </div>
             <div className="flex gap-2">
@@ -178,53 +130,105 @@ export default function Index() {
                 {availableProducts.length} Available
               </Badge>
               <Badge variant="outline" className="bg-fpv-gray/10 text-fpv-gray border-fpv-gray/20">
-                {soldProducts.length} Sold Today
+                {soldProducts.length} Sold
               </Badge>
+              {!connectionStatus.isConnected && (
+                <Button asChild size="sm">
+                  <a href="/settings">
+                    <Settings className="w-4 h-4 mr-2" />
+                    Setup
+                  </a>
+                </Button>
+              )}
             </div>
           </div>
 
-          <Tabs defaultValue="available" className="space-y-6">
-            <TabsList className="grid w-full max-w-md grid-cols-2">
-              <TabsTrigger value="available">Available Items</TabsTrigger>
-              <TabsTrigger value="sold">Recently Sold</TabsTrigger>
-            </TabsList>
+          {!connectionStatus.isConnected ? (
+            <Card className="text-center py-12">
+              <CardContent>
+                <Activity className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                <h3 className="text-lg font-semibold mb-2">WhatsApp Not Connected</h3>
+                <p className="text-muted-foreground mb-4">
+                  Connect your WhatsApp account to start monitoring FPV groups for items.
+                </p>
+                <Button asChild>
+                  <a href="/settings">
+                    <Settings className="w-4 h-4 mr-2" />
+                    Go to Settings
+                  </a>
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <Tabs defaultValue="available" className="space-y-6">
+              <TabsList className="grid w-full max-w-md grid-cols-2">
+                <TabsTrigger value="available">Available Items</TabsTrigger>
+                <TabsTrigger value="sold">Recently Sold</TabsTrigger>
+              </TabsList>
 
-            <TabsContent value="available" className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {availableProducts.map((product) => (
-                  <ProductCard key={product.id} {...product} />
-                ))}
-              </div>
-              
-              {availableProducts.length === 0 && (
-                <Card className="text-center py-12">
-                  <CardContent>
-                    <Package className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                    <h3 className="text-lg font-semibold mb-2">No items available</h3>
-                    <p className="text-muted-foreground">Check back later for new listings from your groups!</p>
-                  </CardContent>
-                </Card>
-              )}
-            </TabsContent>
+              <TabsContent value="available" className="space-y-6">
+                {isLoading ? (
+                  <Card className="text-center py-12">
+                    <CardContent>
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+                      <p className="text-muted-foreground">Loading items...</p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <>
+                    {availableProducts.length > 0 ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {availableProducts.map((product) => (
+                          <ProductCard key={product.id} {...product} />
+                        ))}
+                      </div>
+                    ) : (
+                      <Card className="text-center py-12">
+                        <CardContent>
+                          <Package className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                          <h3 className="text-lg font-semibold mb-2">No items available</h3>
+                          <p className="text-muted-foreground">
+                            No FPV items have been detected in your monitored groups in the last 14 days.
+                          </p>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </>
+                )}
+              </TabsContent>
 
-            <TabsContent value="sold" className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {soldProducts.map((product) => (
-                  <ProductCard key={product.id} {...product} />
-                ))}
-              </div>
-              
-              {soldProducts.length === 0 && (
-                <Card className="text-center py-12">
-                  <CardContent>
-                    <TrendingUp className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                    <h3 className="text-lg font-semibold mb-2">No recent sales</h3>
-                    <p className="text-muted-foreground">Sold items will appear here and be removed after 24 hours.</p>
-                  </CardContent>
-                </Card>
-              )}
-            </TabsContent>
-          </Tabs>
+              <TabsContent value="sold" className="space-y-6">
+                {isLoading ? (
+                  <Card className="text-center py-12">
+                    <CardContent>
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+                      <p className="text-muted-foreground">Loading items...</p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <>
+                    {soldProducts.length > 0 ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {soldProducts.map((product) => (
+                          <ProductCard key={product.id} {...product} />
+                        ))}
+                      </div>
+                    ) : (
+                      <Card className="text-center py-12">
+                        <CardContent>
+                          <TrendingUp className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                          <h3 className="text-lg font-semibold mb-2">No recent sales</h3>
+                          <p className="text-muted-foreground">
+                            No sold items have been detected in your monitored groups in the last 14 days.
+                          </p>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </>
+                )}
+              </TabsContent>
+            </Tabs>
+          )}
         </div>
       </div>
     </div>

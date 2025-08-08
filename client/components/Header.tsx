@@ -13,7 +13,7 @@ export function Header() {
               <span className="text-white font-bold text-sm">FPV</span>
             </div>
             <h1 className="text-xl font-bold bg-gradient-to-r from-fpv-blue to-fpv-orange bg-clip-text text-transparent">
-              FPV Marketplace
+              FPV Groups Marketplace
             </h1>
           </Link>
         </div>

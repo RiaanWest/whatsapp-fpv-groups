@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { WhatsAppStatus } from "@/components/WhatsAppStatus";
 import { GroupSelection } from "@/components/GroupSelection";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,7 +23,28 @@ import {
 export default function Settings() {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [phoneNumber] = useState("+1 (555) 123-4567");
+  const [phoneNumber, setPhoneNumber] = useState("");
+
+  // Check WhatsApp connection status on component mount
+  useEffect(() => {
+    checkConnectionStatus();
+    const interval = setInterval(checkConnectionStatus, 5000); // Check every 5 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  const checkConnectionStatus = async () => {
+    try {
+      const response = await fetch('/api/whatsapp/status');
+      if (response.ok) {
+        const status = await response.json();
+        setIsConnected(status.isConnected);
+        setIsConnecting(status.isConnecting || false);
+        setPhoneNumber(status.phoneNumber || "");
+      }
+    } catch (error) {
+      console.error('Failed to check connection status:', error);
+    }
+  };
   
   // Settings state
   const [notifications, setNotifications] = useState(true);
@@ -32,17 +53,34 @@ export default function Settings() {
   const [soldItemDelay, setSoldItemDelay] = useState("24");
   const [keywordFilters, setKeywordFilters] = useState("drone, quad, fpv, goggles, controller");
 
-  const handleConnect = () => {
+  const handleConnect = async () => {
     setIsConnecting(true);
-    // Simulate connection process
-    setTimeout(() => {
+    try {
+      const response = await fetch('/api/whatsapp/connect', {
+        method: 'POST',
+      });
+      if (response.ok) {
+        // The status will be updated by the polling
+        console.log('Connection initiated');
+      }
+    } catch (error) {
+      console.error('Failed to connect:', error);
       setIsConnecting(false);
-      setIsConnected(true);
-    }, 3000);
+    }
   };
 
-  const handleDisconnect = () => {
-    setIsConnected(false);
+  const handleDisconnect = async () => {
+    try {
+      const response = await fetch('/api/whatsapp/disconnect', {
+        method: 'POST',
+      });
+      if (response.ok) {
+        setIsConnected(false);
+        setPhoneNumber("");
+      }
+    } catch (error) {
+      console.error('Failed to disconnect:', error);
+    }
   };
 
   const handleSaveSettings = () => {

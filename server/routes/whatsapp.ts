@@ -47,6 +47,17 @@ export const disconnectWhatsApp: RequestHandler = async (req, res) => {
   }
 };
 
+// Force disconnect and clear session
+export const forceDisconnect: RequestHandler = async (req, res) => {
+  try {
+    await whatsappService.forceDisconnect();
+    res.json({ message: "Force disconnected and session cleared" });
+  } catch (error) {
+    console.error('Force disconnect failed:', error);
+    res.status(500).json({ error: "Failed to force disconnect" });
+  }
+};
+
 // Get QR code for scanning
 export const getQRCode: RequestHandler = (req, res) => {
   const qrCode = whatsappService.getQRCode();
@@ -111,4 +122,27 @@ export const getDetectedItems: RequestHandler = (req, res) => {
 export const getSoldItems: RequestHandler = (req, res) => {
   const items = whatsappService.getSoldItems();
   res.json(items);
+};
+
+// Get items from last 14 days
+export const getItemsFromLast14Days: RequestHandler = async (req, res) => {
+  try {
+    const items = await whatsappService.getItemsFromLast14Days();
+    res.json(items);
+  } catch (error) {
+    console.error('Failed to get items from last 14 days:', error);
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to get items from last 14 days" });
+  }
+};
+
+// Get sold items from last 14 days
+export const getSoldItemsFromLast14Days: RequestHandler = async (req, res) => {
+  try {
+    const allItems = await whatsappService.getItemsFromLast14Days();
+    const soldItems = allItems.filter(item => item.isSold);
+    res.json(soldItems);
+  } catch (error) {
+    console.error('Failed to get sold items from last 14 days:', error);
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to get sold items from last 14 days" });
+  }
 };

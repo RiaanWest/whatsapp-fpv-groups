@@ -6,12 +6,15 @@ import {
   getConnectionStatus, 
   connectWhatsApp, 
   disconnectWhatsApp, 
+  forceDisconnect,
   getQRCode,
   getGroups, 
   updateGroupStatus, 
   syncGroups,
   getDetectedItems,
-  getSoldItems
+  getSoldItems,
+  getItemsFromLast14Days,
+  getSoldItemsFromLast14Days
 } from "./routes/whatsapp";
 
 export function createServer() {
@@ -34,12 +37,15 @@ export function createServer() {
   app.get("/api/whatsapp/status", getConnectionStatus);
   app.post("/api/whatsapp/connect", connectWhatsApp);
   app.post("/api/whatsapp/disconnect", disconnectWhatsApp);
+  app.post("/api/whatsapp/force-disconnect", forceDisconnect);
   app.get("/api/whatsapp/qr", getQRCode);
   app.get("/api/whatsapp/groups", getGroups);
   app.put("/api/whatsapp/groups/:groupId", updateGroupStatus);
   app.post("/api/whatsapp/sync", syncGroups);
   app.get("/api/whatsapp/items", getDetectedItems);
   app.get("/api/whatsapp/items/sold", getSoldItems);
+  app.get("/api/whatsapp/items/14days", getItemsFromLast14Days);
+  app.get("/api/whatsapp/items/sold/14days", getSoldItemsFromLast14Days);
 
   return app;
 }
