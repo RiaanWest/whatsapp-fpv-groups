@@ -142,6 +142,29 @@ whatsapp-fpv-groups/
 - **WhatsApp**: whatsapp-web.js, Puppeteer
 - **Authentication**: LocalAuth for session persistence
 
+### Enhanced Item Detection
+
+The app uses intelligent detection logic to identify FPV items for sale:
+
+#### **Detection Criteria**
+- **FPV Keywords**: Core terms (drone, quad, fpv, goggles, controller, motor, esc, battery, lipo, transmitter, receiver, camera, vtx, antenna, bundle, setup, charger)
+- **Brand Keywords**: Specific brands (crossfire, taranis, betaflight, clracing, speedix, pyrodrone, foxeer, dji, o4, o4 pro, smooth operater, yeti, gnb, samsung)
+- **Technical Specs**: Specifications (mah, kv, s, xt30, xt60, 4s, 6s, 3s, inch, 2207, 1103)
+- **Component Types**: Parts (pack, packs, module, mount, case, board, checker, bag)
+- **Radio/Protocol**: Radio terms (radio, elrs, expresslrs, pocket, pudo, included, shipping)
+
+#### **Sale Indicators**
+- **Explicit**: "for sale", "selling", "fs:", price symbols ($, £, €)
+- **Implicit**: "dm for", "excluding shipping", "shipping on buyer", "based in", "pickup", "collection"
+- **Shipping**: "included", "pudo", "shipping", "delivery", "postage"
+- **Price Patterns**: R3000, $100, 550 rand, etc.
+- **Condition**: "brand new", "new", "mint condition", "good condition"
+
+#### **Detection Logic**
+1. **Primary**: FPV keyword + (sale keyword OR price indicator OR brand new indicator)
+2. **Secondary**: Sale keyword + price indicator + longer message (>20 chars)
+3. **Tertiary**: Multiple FPV keywords (≥3) in longer message (>50 chars)
+
 ### Performance Optimizations
 
 The 14-day endpoints have been optimized for better performance:

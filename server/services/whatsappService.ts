@@ -189,18 +189,69 @@ class WhatsAppService extends EventEmitter {
 
     const messageText = message.body.toLowerCase();
     
-    // Check if message contains FPV-related keywords and sale indicators
-    const fpvKeywords = ['drone', 'quad', 'fpv', 'goggles', 'controller', 'motor', 'esc', 'battery', 'lipo', 'transmitter', 'receiver', 'camera', 'vtx', 'antenna', 'bundle', 'setup', 'motor', 'motors', 'charger'];
-    const saleKeywords = ['for sale', 'selling', 'fs:', '$', '£', '€', 'price', 'sold'];
+    // Debug logging for specific message
+    if (message.body.toLowerCase().includes('pocket radio elrs')) {
+      console.log('🔍 DEBUG: Found Pocket Radio message:', message.body);
+      console.log('🔍 DEBUG: Message from:', message.from);
+      console.log('🔍 DEBUG: Message timestamp:', message.timestamp);
+    }
     
+    // Enhanced FPV-related keywords to capture more items
+    const fpvKeywords = [
+      // Core FPV terms
+      'drone', 'quad', 'fpv', 'goggles', 'controller', 'motor', 'esc', 'battery', 'lipo', 
+      'transmitter', 'receiver', 'camera', 'vtx', 'antenna', 'bundle', 'setup', 'charger',
+      // Specific brands and models
+      'crossfire', 'taranis', 'betaflight', 'clracing', 'speedix', 'pyrodrone', 'foxeer',
+      'dji', 'o4', 'o4 pro', 'smooth operater', 'yeti', 'gnb', 'samsung',
+      // Technical specifications
+      'mah', 'kv', 's', 'xt30', 'xt60', '4s', '6s', '3s', 'inch', '2207', '1103',
+      // Component types
+      'pack', 'packs', 'module', 'mount', 'case', 'board', 'checker', 'bag',
+      // Additional FPV terms
+      'radio', 'elrs', 'expresslrs', 'pocket', 'pudo', 'included', 'shipping'
+    ];
+    
+    // Enhanced sale indicators
+    const saleKeywords = [
+      'for sale', 'selling', 'fs:', '$', '£', '€', 'price', 'sold', 'dm for', 'dm for more',
+      'excluding shipping', 'shipping on buyer', 'based in', 'pickup', 'collection',
+      'included', 'pudo', 'shipping', 'delivery', 'postage'
+    ];
+    
+    // Check for FPV keywords
     const hasFpvKeyword = fpvKeywords.some(keyword => messageText.includes(keyword));
+    
+    // Check for sale indicators
     const hasSaleKeyword = saleKeywords.some(keyword => messageText.includes(keyword));
     
-    if (hasFpvKeyword && hasSaleKeyword) {
+    // Check for price indicators (R, $, etc.)
+    const hasPriceIndicator = /\b(?:r\s*\d+|\$\s*\d+|\d+\s*(?:rand|zar|usd|gbp|eur))\b/i.test(message.body);
+    
+    // Check for brand new indicators
+    const hasBrandNewIndicator = /\b(?:brand new|new|mint condition|good condition)\b/i.test(message.body);
+    
+    // Enhanced detection logic
+    const isItemForSale = (hasFpvKeyword && (hasSaleKeyword || hasPriceIndicator || hasBrandNewIndicator)) ||
+                          (hasSaleKeyword && hasPriceIndicator && messageText.length > 20) || // Longer messages likely contain item details
+                          (hasFpvKeyword && messageText.length > 50 && fpvKeywords.filter(k => messageText.includes(k)).length >= 3); // Multiple FPV keywords in longer message
+    
+    // Debug logging for detection
+    if (message.body.toLowerCase().includes('pocket radio elrs')) {
+      console.log('🔍 DEBUG: Detection analysis for Pocket Radio message:');
+      console.log('  - hasFpvKeyword:', hasFpvKeyword);
+      console.log('  - hasSaleKeyword:', hasSaleKeyword);
+      console.log('  - hasPriceIndicator:', hasPriceIndicator);
+      console.log('  - hasBrandNewIndicator:', hasBrandNewIndicator);
+      console.log('  - isItemForSale:', isItemForSale);
+    }
+    
+    if (isItemForSale) {
       const item = await this.extractItemFromMessage(message);
       if (item) {
         this.detectedItems.push(item);
         this.emit('itemDetected', item);
+        console.log('✅ Item detected and added:', item.title);
       }
     }
 
@@ -225,6 +276,8 @@ class WhatsAppService extends EventEmitter {
         /price[:\s]*(\d+)/i,                        // Price: 1234
         /(\d+)\s*(?:rand|zar|usd|gbp|eur)/i,       // 1234 rand
         /r\s*(\d+)/i,                               // R1234
+        /r(\d+)/i,                                  // R3000 (no space)
+        /(\d+)\s*(?:excluding|including|shipping)/i, // 3000 excluding shipping
       ];
       
       let price = 'Price on request';
@@ -244,7 +297,12 @@ class WhatsAppService extends EventEmitter {
       const titlePatterns = [
         /(?:selling|for sale|fs:?)\s*(.+?)(?:\n|$)/i,
         /(.+?)\s*(?:for sale|selling|fs:?)/i,
-        /(?:drone|quad|goggles|controller|transmitter|receiver|motor|esc|battery|camera|vtx|antenna)[^.]*\./i
+        /(?:drone|quad|goggles|controller|transmitter|receiver|motor|esc|battery|camera|vtx|antenna)[^.]*\./i,
+        // New patterns for better title extraction
+        /^([^•\n]+?)(?:\s*•|$)/i,  // First line before bullet points
+        /(?:selling|for sale)\s*•\s*(.+?)(?:\s*•|\n|$)/i,  // First bullet point after "selling"
+        /^([^•\n]+?)(?:\s*[-–]\s*|$)/i,  // First line before dash
+        /(?:brand new|new)\s*(.+?)(?:\s*[-–]|\n|$)/i,  // After "brand new" or "new"
       ];
       
       for (const pattern of titlePatterns) {
@@ -273,7 +331,11 @@ class WhatsAppService extends EventEmitter {
       // Extract location from message text
       const locationPatterns = [
         /(?:location|area|pickup|collection):\s*(.+?)(?:\n|$)/i,
-        /(?:jhb|joburg|pretoria|ct|cape town|durban|bloem|bloemfontein|pe|port elizabeth)/i
+        /(?:jhb|joburg|pretoria|ct|cape town|durban|bloem|bloemfontein|pe|port elizabeth)/i,
+        // Enhanced location patterns
+        /(?:based in|located in|pickup from)\s*(.+?)(?:\n|$)/i,
+        /(?:southern suburbs|cape town|johannesburg|pretoria|durban|bloemfontein|port elizabeth)/i,
+        /(?:cpt|jhb|pta|dbn|bloem|pe)\b/i,  // Abbreviations
       ];
       
       let location = 'Unknown';
@@ -473,14 +535,16 @@ class WhatsAppService extends EventEmitter {
     const fourteenDaysAgoTimestamp = Math.floor(fourteenDaysAgo.getTime() / 1000);
 
     const items: FPVItem[] = [];
-    const maxItems = 50; // Limit to 50 items for performance
+    const maxItems = 1000; // Increased limit to scan more items
 
     try {
       const chats = await this.client.getChats();
       const activeGroups = chats.filter(chat => chat.isGroup && this.activeGroups.has(chat.id._serialized)) as GroupChat[];
 
-      console.log(`Scanning ${activeGroups.length} active groups for items from last 14 days...`);
-
+            console.log(`Scanning ${activeGroups.length} active groups for items from last 14 days...`);
+      console.log(`Active groups in Set:`, Array.from(this.activeGroups));
+      console.log(`Active groups from database:`, activeGroups.map(g => g.id));
+      
       for (const group of activeGroups) {
         if (items.length >= maxItems) {
           console.log(`Reached max items limit (${maxItems}), stopping scan`);
@@ -490,8 +554,8 @@ class WhatsAppService extends EventEmitter {
         try {
           console.log(`Scanning group: ${group.name}`);
           
-          // Get fewer messages for better performance
-          const messages = await group.fetchMessages({ limit: 200 });
+          // Get more messages to scan through more content
+          const messages = await group.fetchMessages({ limit: 1000 });
           const recentMessages = messages.filter(msg => msg.timestamp >= fourteenDaysAgoTimestamp);
 
           console.log(`Found ${recentMessages.length} recent messages in ${group.name}`);
@@ -501,24 +565,55 @@ class WhatsAppService extends EventEmitter {
 
             const messageText = message.body?.toLowerCase() || '';
             
-            // Quick keyword check for performance
-            const hasFpvKeyword = messageText.includes('drone') || messageText.includes('fpv') || 
-                                 messageText.includes('goggles') || messageText.includes('quad') ||
-                                 messageText.includes('motor') || messageText.includes('battery') ||
-                                 messageText.includes('controller') || messageText.includes('camera');
+            // Enhanced FPV-related keywords (same as processMessage)
+            const fpvKeywords = [
+              // Core FPV terms
+              'drone', 'quad', 'fpv', 'goggles', 'controller', 'motor', 'esc', 'battery', 'lipo', 
+              'transmitter', 'receiver', 'camera', 'vtx', 'antenna', 'bundle', 'setup', 'charger',
+              // Specific brands and models
+              'crossfire', 'taranis', 'betaflight', 'clracing', 'speedix', 'pyrodrone', 'foxeer',
+              'dji', 'o4', 'o4 pro', 'smooth operater', 'yeti', 'gnb', 'samsung',
+              // Technical specifications
+              'mah', 'kv', 's', 'xt30', 'xt60', '4s', '6s', '3s', 'inch', '2207', '1103',
+              // Component types
+              'pack', 'packs', 'module', 'mount', 'case', 'board', 'checker', 'bag',
+              // Additional FPV terms
+              'radio', 'elrs', 'expresslrs', 'pocket', 'pudo', 'included', 'shipping'
+            ];
             
-            const hasSaleKeyword = messageText.includes('sale') || messageText.includes('selling') || 
-                                  messageText.includes('fs:') || messageText.includes('$') ||
-                                  messageText.includes('price') || messageText.includes('offer');
+            // Enhanced sale indicators (same as processMessage)
+            const saleKeywords = [
+              'for sale', 'selling', 'fs:', '$', '£', '€', 'price', 'sold', 'dm for', 'dm for more',
+              'excluding shipping', 'shipping on buyer', 'based in', 'pickup', 'collection',
+              'included', 'pudo', 'shipping', 'delivery', 'postage'
+            ];
             
-            // Skip obvious non-sale messages
-            const isNonSaleMessage = messageText.includes('hello') || 
-                                   messageText.includes('hi') || 
-                                   messageText.includes('thanks') ||
-                                   messageText.includes('thank you') ||
-                                   messageText.length < 10;
+            // Check for FPV keywords
+            const hasFpvKeyword = fpvKeywords.some(keyword => messageText.includes(keyword));
             
-            if (hasFpvKeyword && hasSaleKeyword && !isNonSaleMessage) {
+            // Check for sale indicators
+            const hasSaleKeyword = saleKeywords.some(keyword => messageText.includes(keyword));
+            
+            // Check for price indicators (R, $, etc.)
+            const hasPriceIndicator = /\b(?:r\s*\d+|\$\s*\d+|\d+\s*(?:rand|zar|usd|gbp|eur))\b/i.test(message.body);
+            
+            // Check for brand new indicators
+            const hasBrandNewIndicator = /\b(?:brand new|new|mint condition|good condition)\b/i.test(message.body);
+            
+            // Enhanced detection logic (same as processMessage)
+            const isItemForSale = (hasFpvKeyword && (hasSaleKeyword || hasPriceIndicator || hasBrandNewIndicator)) ||
+                                  (hasSaleKeyword && hasPriceIndicator && messageText.length > 20) || // Longer messages likely contain item details
+                                  (hasFpvKeyword && messageText.length > 50 && fpvKeywords.filter(k => messageText.includes(k)).length >= 3); // Multiple FPV keywords in longer message
+            
+            // Debug logging for specific message
+            if (message.body.toLowerCase().includes('pocket radio elrs')) {
+              console.log('🔍 DEBUG: Found Pocket Radio message in 14-day scan:', message.body);
+              console.log('🔍 DEBUG: Detection analysis:', { hasFpvKeyword, hasSaleKeyword, hasPriceIndicator, hasBrandNewIndicator, isItemForSale });
+              console.log('🔍 DEBUG: Message timestamp:', new Date(message.timestamp * 1000).toLocaleString());
+              console.log('🔍 DEBUG: Message from:', message.from);
+            }
+            
+            if (isItemForSale) {
               const item = await this.extractItemFromMessage(message);
               if (item) {
                 items.push(item);
@@ -547,11 +642,15 @@ class WhatsAppService extends EventEmitter {
   }
 
   setGroupActive(groupId: string, isActive: boolean) {
+    console.log(`Setting group ${groupId} active: ${isActive}`);
     if (isActive) {
       this.activeGroups.add(groupId);
+      console.log(`Added group ${groupId} to active groups. Total active: ${this.activeGroups.size}`);
     } else {
       this.activeGroups.delete(groupId);
+      console.log(`Removed group ${groupId} from active groups. Total active: ${this.activeGroups.size}`);
     }
+    console.log(`Current active groups:`, Array.from(this.activeGroups));
   }
 
   private async checkSessionExists(): Promise<boolean> {
